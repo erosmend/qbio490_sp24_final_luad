@@ -43,6 +43,9 @@ clin_query <- GDCquery(project = "TCGA-LUAD",
                        data.format = 'BCR Biotab')
 #GDCdownload(clin_query)
 clinical.BCRtab.all <- GDCprepare(clin_query)
+
+clinical <- clinical.BCRtab.all$clinical_patient_luad
+write.csv(clinical, "clinical.csv")
 ```
 
 ```{r}
@@ -86,18 +89,16 @@ dir.create("/Users/erosmendoza/Downloads/qbio490_sp24_final_luad/outputs")
 # Set the working directory to the 'outputs' folder
 setwd("/Users/erosmendoza/Downloads/qbio490_sp24_final_luad/outputs")
 
-clinical <- clinical.BCRtab.all$clinical_patient_luad
 # Generate an oncoplot
+jpeg("oncoplot_luad.jpg")
 oncoplot(maf = maf_object,
          top = 15,
          borderCol = NA)
-
-write.csv(clinical, "clinical_data.csv")
-jpeg("oncoplot_luad.jpg")
 dev.off()
 ```
 
 ```{r}
+#jpeg("KM_Plot_luad.jpg")
 # Clean clinical data
 valid_indicators <- !(clinical$tobacco_smoking_history_indicator %in% c("[Unknown]", "[Not Available]", '5'))
 cleaned_clinical <- clinical[valid_indicators, ]
@@ -128,15 +129,13 @@ KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20)
                                               legend.title = element_text(size=14),
                                               legend.text = element_text(size=12))
 KM_plot
-
-jpeg("km_plot_luad.jpg")
-dev.off()
+#dev.off()
 ```
 
 ```{r}
 # Get top mutated genes
 mut_genes <- maf_object@gene.summary$Hugo_Symbol[1:100]
-write(mut_genes, "/Users/erosmendoza/Downloads/qbio_490_erosmendoza/mut_genes.txt")
+write(mut_genes, "/Users/erosmendoza/Downloads/qbio490_sp24_final_luad/outputs/mut_genes.txt")
 
 ```
 
@@ -161,18 +160,18 @@ indicator_2_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_2_barcodes)
 indicator_4_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_4_barcodes)
 
 # Generate co-oncoplot
+jpeg("co-oncoplot1_luad.jpg")
 coOncoplot(m1 = indicator_2_mask_maf2,
            m2 = indicator_4_mask_maf2,
            m1Name = "Non-smokers",
            m2Name = "Smokers",
            borderCol = NA)
-
-jpeg("co-oncoplot1_luad.jpg")
 dev.off()
 ```
 
 ```{r}
 # Generate lollipop plot for specific gene
+jpeg("lollipopPlot1_luad.jpg")
 lollipopPlot2(m1 = indicator_2_mask_maf2,
               m2 = indicator_4_mask_maf2,
               m1_name = "Non-smokers",
@@ -180,8 +179,6 @@ lollipopPlot2(m1 = indicator_2_mask_maf2,
               AACol1 = NULL,
               AACol2 = NULL,
               gene = "EGFR")
-
-jpeg("lollipopPlot1_luad.jpg")
 dev.off()
 ```
 
@@ -197,18 +194,18 @@ indicator_1_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_1_barcodes)
 indicator_3_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_3_barcodes)
 
 # Generate co-oncoplot for other comparisons
+jpeg("co-oncoplot2_luad.jpg")
 coOncoplot(m1 = indicator_1_mask_maf2,
            m2 = indicator_3_mask_maf2,
            m1Name = "Current smokers",
            m2Name = "Reformed smokers (>15 yrs)",
            borderCol = NA)
-
-jpeg("co-oncoplot2_luad.jpg")
 dev.off()
 ```
 
 ```{r}
 # Generate lollipop plot for other comparisons
+jpeg("lollipopPlot2_luad.jpg")
 lollipopPlot2(m1 = indicator_1_mask_maf2,
               m2 = indicator_2_mask_maf2,
               m1_name = "Non-smokers",
@@ -216,7 +213,6 @@ lollipopPlot2(m1 = indicator_1_mask_maf2,
               AACol1 = NULL,
               AACol2 = NULL,
               gene = "EGFR")
-jpeg("lollipopPlot2_luad.jpg")
 dev.off()
 ```
 
@@ -241,6 +237,7 @@ m2_gene_summary$Hugo_Symbol[1:20]
 # EGFR
 
 # Generate lollipop plots
+jpeg("lollipopPlot3_luad.jpg")
 lollipopPlot2(m1 = indicator_1_mask_maf2,
               m2 = indicator_4_mask_maf2,
               m1_name = "Non-smokers",
@@ -248,8 +245,6 @@ lollipopPlot2(m1 = indicator_1_mask_maf2,
               AACol1 = NULL,
               AACol2 = NULL,
               gene = "KRAS")
-
-jpeg("lollipopPlot3_luad.jpg")
 dev.off()
 
 m4_gene_summary$Hugo_Symbol[1:20] %in% m1_gene_summary$Hugo_Symbol[1:20]
@@ -257,6 +252,7 @@ m4_gene_summary$Hugo_Symbol[1:20]
 m1_gene_summary$Hugo_Symbol[1:20]
 # KRAS
 
+jpeg("lollipopPlot4_luad.jpg")
 lollipopPlot2(m1 = indicator_2_mask_maf2,
               m2 = indicator_3_mask_maf2,
               m1_name = "Current smokers",
@@ -264,8 +260,6 @@ lollipopPlot2(m1 = indicator_2_mask_maf2,
               AACol1 = NULL,
               AACol2 = NULL,
               gene = "ALK")
-
-jpeg("lollipopPlot4_luad.jpg")
 dev.off()
 ```
 
@@ -292,6 +286,7 @@ results <- results(dds, contrast = c("smoking_indicator", "2", "1"))
 
 ```{r}
 # Generate volcano plot for differential expression analysis
+jpeg("volcanoPlot_luad.jpg")
 results <- as.data.frame(results)
 rna_genes <- as.data.frame(rna_se@rowRanges@elementMetadata)
 EnhancedVolcano(results,
@@ -301,8 +296,6 @@ EnhancedVolcano(results,
                 title = 'Current smokers vs. Non-smokers',
                 pointSize = 1.0,
                 labSize = 5.0)
-
-jpeg("volcanoPlot_luad.jpg")
 dev.off()
 ```
 
