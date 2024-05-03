@@ -1,0 +1,308 @@
+---
+title: "Final Project"
+name: "Eros Mendoza"
+output: html_notebook
+---
+
+```{r}
+# Load necessary packages
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install(version = "3.18")
+
+# Install and load required packages
+if (!require("TCGAbiolinks", quietly = TRUE))
+  BiocManager::install("TCGAbiolinks")
+
+if (!require("maftools", quietly = TRUE))
+  BiocManager::install("maftools")
+
+if(!require("DESeq2", quietly = TRUE))
+  BiocManager::install("DESeq2")
+
+if(!require("EnhancedVolcano", quietly = TRUE))
+  BiocManager::install("EnhancedVolcano")
+
+library(BiocManager)
+library(TCGAbiolinks)
+library(maftools)
+library(survival)
+library(survminer)
+library(DESeq2)
+library(EnhancedVolcano)
+library(ggplot2)
+
+```
+
+```{r}
+# Query and prepare clinical data
+clin_query <- GDCquery(project = "TCGA-LUAD",
+                       data.category = "Clinical",
+                       data.type = "Clinical Supplement",
+                       data.format = 'BCR Biotab')
+#GDCdownload(clin_query)
+clinical.BCRtab.all <- GDCprepare(clin_query)
+```
+
+```{r}
+# Query and prepare RNA-Seq data
+rna_query <- GDCquery(project ="TCGA-LUAD",
+                      data.category = "Transcriptome Profiling",
+                      data.type = "Gene Expression Quantification",
+                      workflow.type = "STAR - Counts")
+#GDCdownload(rna_query)
+rna_se <- GDCprepare(rna_query)
+rna_clinical <- data.frame(rna_se@colData)
+```
+
+```{r}
+# Add patient ID column to RNA-Seq clinical data
+rna_clinical$Tumor_Sample_Barcode <- rna_clinical$patient
+
+# Query and prepare MAF data
+maf_query <- GDCquery(
+  project = 'TCGA-LUAD',
+  data.category = "Simple Nucleotide Variation",
+  access = "open", # we only have access to somatic mutations which are open access
+  data.type = "Masked Somatic Mutation",
+  workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking"
+)
+
+#GDCdownload(maf_query)
+
+maf <- GDCprepare(maf_query) # as long as it runs, ignore any errors
+
+# Read MAF data and associate clinical data
+maf_object <- read.maf(maf = maf,
+                       clinicalData = rna_clinical,
+                       isTCGA = TRUE)
+```
+
+```{r}
+# Create the 'outputs' folder
+dir.create("/Users/erosmendoza/Downloads/qbio490_sp24_final_luad/outputs")
+
+# Set the working directory to the 'outputs' folder
+setwd("/Users/erosmendoza/Downloads/qbio490_sp24_final_luad/outputs")
+
+clinical <- clinical.BCRtab.all$clinical_patient_luad
+# Generate an oncoplot
+oncoplot(maf = maf_object,
+         top = 15,
+         borderCol = NA)
+
+write.csv(clinical, "clinical_data.csv")
+jpeg("oncoplot_luad.jpg")
+dev.off()
+```
+
+```{r}
+# Clean clinical data
+valid_indicators <- !(clinical$tobacco_smoking_history_indicator %in% c("[Unknown]", "[Not Available]", '5'))
+cleaned_clinical <- clinical[valid_indicators, ]
+#cleaned_clinical$tobacco_smoking_history_indicator
+
+# Prepare survival data
+cleaned_clinical$survival_time <- ifelse(cleaned_clinical$death_days_to %in% c("[Not Applicable]", "[Not Available]"), cleaned_clinical$last_contact_days_to, cleaned_clinical$death_days_to)
+survival_time_mask <- !is.na(cleaned_clinical$survival_time)
+cleaned_clinical <- cleaned_clinical[survival_time_mask, ]
+cleaned_clinical$survival_time <- as.numeric(cleaned_clinical$survival_time)
+
+# Create survival object
+cleaned_clinical$death_event <- ifelse(cleaned_clinical$vital_status == "Dead", "T", "F")
+cleaned_clinical$death_event <- as.logical(cleaned_clinical$death_event)
+
+survival_object <- Surv(time = cleaned_clinical$survival_time,
+                        event = cleaned_clinical$death_event)
+# Fit survival model
+fit_object <- survfit(survival_object ~ tobacco_smoking_history_indicator, data = cleaned_clinical)
+
+# Generate Kaplan-Meier plot
+survplot <- ggsurvplot(fit_object,
+                       pval = TRUE,
+                       ggtheme = theme(plot.margin = unit(c(1,1,1,1), "cm")),
+                       legend = 'right')
+KM_plot <- survplot$plot + theme_bw() + theme(axis.title = element_text(size=20), 
+                                              axis.text = element_text(size=16),
+                                              legend.title = element_text(size=14),
+                                              legend.text = element_text(size=12))
+KM_plot
+
+jpeg("km_plot_luad.jpg")
+dev.off()
+```
+
+```{r}
+# Get top mutated genes
+mut_genes <- maf_object@gene.summary$Hugo_Symbol[1:100]
+write(mut_genes, "/Users/erosmendoza/Downloads/qbio_490_erosmendoza/mut_genes.txt")
+
+```
+
+```{r}
+# Prepare MAF data with new clinical data
+colnames(clinical)[colnames(clinical) == "bcr_patient_barcode"] <- "Tumor_Sample_Barcode"
+maf <- GDCprepare(maf_query) #as long as it runs, ignore any errors
+
+maf_object <- read.maf(maf = maf,
+                       clinicalData = clinical,
+                       isTCGA = TRUE)
+maf_clinical <- maf_object@clinical.data
+
+# Subset MAF data based on smoking indicators
+indicator_2_mask <- ifelse(maf_clinical$tobacco_smoking_history_indicator %in% c("2"), T, F)
+indicator_4_mask <- ifelse(maf_clinical$tobacco_smoking_history_indicator %in% c("4"), T, F)
+
+indicator_2_barcodes <- maf_clinical$Tumor_Sample_Barcode[indicator_2_mask]
+indicator_4_barcodes <- maf_clinical$Tumor_Sample_Barcode[indicator_4_mask]
+
+indicator_2_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_2_barcodes)
+indicator_4_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_4_barcodes)
+
+# Generate co-oncoplot
+coOncoplot(m1 = indicator_2_mask_maf2,
+           m2 = indicator_4_mask_maf2,
+           m1Name = "Non-smokers",
+           m2Name = "Smokers",
+           borderCol = NA)
+
+jpeg("co-oncoplot1_luad.jpg")
+dev.off()
+```
+
+```{r}
+# Generate lollipop plot for specific gene
+lollipopPlot2(m1 = indicator_2_mask_maf2,
+              m2 = indicator_4_mask_maf2,
+              m1_name = "Non-smokers",
+              m2_name = "Smokers",
+              AACol1 = NULL,
+              AACol2 = NULL,
+              gene = "EGFR")
+
+jpeg("lollipopPlot1_luad.jpg")
+dev.off()
+```
+
+```{r}
+# Subset MAF data for other comparisons
+indicator_1_mask <- ifelse(maf_clinical$tobacco_smoking_history_indicator %in% c("1"), T, F)
+indicator_3_mask <- ifelse(maf_clinical$tobacco_smoking_history_indicator %in% c("3"), T, F)
+
+indicator_1_barcodes <- maf_clinical$Tumor_Sample_Barcode[indicator_1_mask]
+indicator_3_barcodes <- maf_clinical$Tumor_Sample_Barcode[indicator_3_mask]
+
+indicator_1_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_1_barcodes)
+indicator_3_mask_maf2 <- subsetMaf(maf=maf_object, tsb=indicator_3_barcodes)
+
+# Generate co-oncoplot for other comparisons
+coOncoplot(m1 = indicator_1_mask_maf2,
+           m2 = indicator_3_mask_maf2,
+           m1Name = "Current smokers",
+           m2Name = "Reformed smokers (>15 yrs)",
+           borderCol = NA)
+
+jpeg("co-oncoplot2_luad.jpg")
+dev.off()
+```
+
+```{r}
+# Generate lollipop plot for other comparisons
+lollipopPlot2(m1 = indicator_1_mask_maf2,
+              m2 = indicator_2_mask_maf2,
+              m1_name = "Non-smokers",
+              m2_name = "Current smokers",
+              AACol1 = NULL,
+              AACol2 = NULL,
+              gene = "EGFR")
+jpeg("lollipopPlot2_luad.jpg")
+dev.off()
+```
+
+```{r}
+# Compare gene mutations between different smoking indicators
+m1_gene_summary <- indicator_1_mask_maf2@gene.summary
+m2_gene_summary <- indicator_2_mask_maf2@gene.summary
+m3_gene_summary <- indicator_3_mask_maf2@gene.summary
+m4_gene_summary <- indicator_4_mask_maf2@gene.summary
+
+#Lifelong Non-smoker (less than 100 cigarettes smoked in Lifetime) = 1
+#Current smoker (includes daily smokers and non-daily smokers or occasional smokers) = 2
+#Current reformed smoker for > 15 years (greater than 15 years) = 3
+#Current reformed smoker for ≤15 years (less than or equal to 15 years) = 4
+#Current reformed smoker, duration not specified = 5
+#Smoking History not documented = 7
+
+# Perform comparisons
+m1_gene_summary$Hugo_Symbol[1:20] %in% m2_gene_summary$Hugo_Symbol[1:20]
+m1_gene_summary$Hugo_Symbol[1:20]
+m2_gene_summary$Hugo_Symbol[1:20]
+# EGFR
+
+# Generate lollipop plots
+lollipopPlot2(m1 = indicator_1_mask_maf2,
+              m2 = indicator_4_mask_maf2,
+              m1_name = "Non-smokers",
+              m2_name = "Reformed smokers",
+              AACol1 = NULL,
+              AACol2 = NULL,
+              gene = "KRAS")
+
+jpeg("lollipopPlot3_luad.jpg")
+dev.off()
+
+m4_gene_summary$Hugo_Symbol[1:20] %in% m1_gene_summary$Hugo_Symbol[1:20]
+m4_gene_summary$Hugo_Symbol[1:20]
+m1_gene_summary$Hugo_Symbol[1:20]
+# KRAS
+
+lollipopPlot2(m1 = indicator_2_mask_maf2,
+              m2 = indicator_3_mask_maf2,
+              m1_name = "Current smokers",
+              m2_name = "Reformed smokers (>15 yrs)",
+              AACol1 = NULL,
+              AACol2 = NULL,
+              gene = "ALK")
+
+jpeg("lollipopPlot4_luad.jpg")
+dev.off()
+```
+
+
+```{r}
+# Prepare data for differential expression analysis
+rna_clinical_filtered <- rna_clinical[rna_clinical$patient %in% indicator_1_barcodes | rna_clinical$patient %in% indicator_2_barcodes, ]
+rna_clinical_filtered$smoking_indicator <- ifelse(rna_clinical_filtered$patient %in% indicator_1_barcodes, '1', '2')
+
+# Subset RNA counts data
+rna_counts_subset <- as.data.frame(rna_se@assays@data$unstranded)
+rownames(rna_counts_subset) <- rna_se@rowRanges@elementMetadata$gene_id
+colnames(rna_counts_subset) <- rownames(rna_se@colData)
+rna_counts_subset <- rna_counts_subset[, rownames(rna_clinical_filtered) ]
+
+# Perform differential expression analysis
+dds <- DESeqDataSetFromMatrix(countData = rna_counts_subset,
+                              colData = rna_clinical_filtered,
+                              design = ~smoking_indicator)
+
+dds <- DESeq(dds)
+results <- results(dds, contrast = c("smoking_indicator", "2", "1"))
+```
+
+```{r}
+# Generate volcano plot for differential expression analysis
+results <- as.data.frame(results)
+rna_genes <- as.data.frame(rna_se@rowRanges@elementMetadata)
+EnhancedVolcano(results,
+                lab = rna_genes$gene_name,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                title = 'Current smokers vs. Non-smokers',
+                pointSize = 1.0,
+                labSize = 5.0)
+
+jpeg("volcanoPlot_luad.jpg")
+dev.off()
+```
+
